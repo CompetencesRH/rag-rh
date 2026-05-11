@@ -10,6 +10,16 @@
 #   langchain-huggingface langchain-chroma \
 #   sentence-transformers cerebras-cloud-sdk chromadb
 #!pip install cerebras-cloud-sdk
+#!pip install -q \
+  langchain \
+  langchain-text-splitters \
+  langchain-community \
+  langchain-huggingface \
+  langchain-chroma \
+  sentence-transformers \
+  cerebras-cloud-sdk \
+  chromadb
+#
 #
 # Puis : Runtime → Restart session → exécuter les cellules dans l'ordre
 # =============================================================================
