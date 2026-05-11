@@ -1,56 +1,54 @@
-# app.py — Ton RAG RGPD exact (Flask + Render)
 import os
+import re
 from flask import Flask, render_template, request, jsonify
 
-# =============================================================================
-# TON CODE EXACT (importé et gardé à 100%)
-# =============================================================================
-import re
+# LangChain imports
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEndpointEmbeddings  # Version API légère
 from langchain_core.documents import Document
 from cerebras.cloud.sdk import Cerebras
 
 app = Flask(__name__)
 
-# Configuration (TA clé via Render)
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
 FILE_PATH = "RefRGPD.md"
-CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY")  # ← Via Render !
+CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY")
+HF_TOKEN = os.environ.get("HUGGINGFACEHUB_API_TOKEN")
 
-# Variables globales pour ton vectorstore et client
+# Variables globales
 vectorstore = None
 client = None
 
 # =============================================================================
-# FONCTION D'INITIALISATION (charge ton code au démarrage)
+# FONCTION D'INITIALISATION
 # =============================================================================
 def init_rag():
     global vectorstore, client
     
+    if not os.path.exists(FILE_PATH):
+        print(f"❌ Erreur : Le fichier {FILE_PATH} est introuvable.")
+        return
+
     print("📄 Chargement du document...")
     with open(FILE_PATH, "r", encoding="utf-8") as f:
         markdown_content = f.read()
     print(f"✅ Document chargé ({len(markdown_content)} caractères)")
 
-    # TON ÉTAPE 2 — EXTRACTION DES TABLEAUX (exactement ton code)
+    # Extraction des tableaux
     def extract_tables(text):
-        table_pattern = r'(\|.+\|[\n\r](?:\|[-:| ]+\|[\n\r])(?:\|.+\|[\n\r])*)'  # ← Corrigé
+        table_pattern = r'(\|.+\|[\n\r](?:\|[-:| ]+\|[\n\r])(?:\|.+\|[\n\r])*)'
         tables = re.findall(table_pattern, text)
-        clean_text = re.sub(table_pattern, '\n', text)  # ← Corrigé
-        print(f"📊 {len(tables)} tableau(x) extrait(s) séparément")
+        clean_text = re.sub(table_pattern, '\n', text)
         return clean_text, tables
 
     markdown_clean, tables = extract_tables(markdown_content)
 
-    # TON ÉTAPE 3 — CHUNKING HYBRIDE (exactement ton code)
-    print("\n✂️  Découpage du document en chunks...")
-    headers_to_split_on = [
-        ("#",   "Header 1"),   ("##",  "Header 2"),   ("###", "Header 3"),
-    ]
-    markdown_splitter = MarkdownHeaderTextSplitter(
-        headers_to_split_on=headers_to_split_on, strip_headers=False
-    )
+    # Chunking hybride
+    headers_to_split_on = [("#", "Header 1"), ("##", "Header 2"), ("###", "Header 3")]
+    markdown_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on, strip_headers=False)
     md_header_splits = markdown_splitter.split_text(markdown_clean)
 
     text_splitter = RecursiveCharacterTextSplitter(
@@ -58,75 +56,62 @@ def init_rag():
         separators=["\n\n", "\n", ".", " ", ""]
     )
     splits = text_splitter.split_documents(md_header_splits)
-    print(f"✅ {len(splits)} chunks créés depuis le texte principal")
 
-    # TON ÉTAPE 4 — RÉINJECTION TITRE (exactement)
-    def enrich_chunks_with_context(splits):
-        for doc in splits:
-            prefix_parts = []
-            for key in ["Header 1", "Header 2", "Header 3"]:
-                if key in doc.metadata:
-                    prefix_parts.append(doc.metadata[key])
+    # Enrichissement avec contexte
+    def enrich_chunks_with_context(docs):
+        for doc in docs:
+            prefix_parts = [doc.metadata[k] for k in ["Header 1", "Header 2", "Header 3"] if k in doc.metadata]
             if prefix_parts:
-                prefix = " > ".join(prefix_parts)
-                doc.page_content = f"[{prefix}]\n\n{doc.page_content}"
-        return splits
+                doc.page_content = f"[{' > '.join(prefix_parts)}]\n\n{doc.page_content}"
+        return docs
+    
     splits = enrich_chunks_with_context(splits)
 
-    # TON ÉTAPE 5 — CHUNK TITRE PRINCIPAL (exactement)
-    def add_title_chunk(markdown_text, splits):
-        lines = markdown_text.strip().split("\n")
-        title_line = next((l for l in lines if l.startswith("# ")), None)
-        if title_line:
-            title = title_line.replace("# ", "").strip()
-            print(f"📌 Titre principal détecté : '{title}'")
-            title_doc = Document(
-                page_content=f"Ce document est intitulé : {title}\nTitre principal du document : {title}\nIl s'agit d'un accord portant sur : {title}",
-                metadata={"Header 1": title, "source": "titre_principal"}
-            )
-            splits.insert(0, title_doc)
-        else:
-            print("⚠️  Aucun titre principal (# ...) trouvé dans le document")
-        return splits
-    splits = add_title_chunk(markdown_content, splits)
+    # Ajout du titre principal
+    lines = markdown_content.strip().split("\n")
+    title_line = next((l for l in lines if l.startswith("# ")), None)
+    if title_line:
+        title = title_line.replace("# ", "").strip()
+        splits.insert(0, Document(
+            page_content=f"Ce document est intitulé : {title}\nIl porte sur le RGPD.",
+            metadata={"Header 1": title, "source": "titre_principal"}
+        ))
 
-    # TON ÉTAPE 6 — TABLEAUX (exactement)
+    # Ajout des tableaux
     for i, table in enumerate(tables):
-        table_doc = Document(
+        splits.append(Document(
             page_content=f"[Tableau {i+1}]\n\n{table.strip()}",
             metadata={"source": f"tableau_{i+1}"}
-        )
-        splits.append(table_doc)
-    print(f"✅ {len(splits)} chunks au total (texte + titre + tableaux)")
+        ))
 
-    # TON ÉTAPE 7 — EMBEDDINGS (exactement)
-    print("\n🔢 Création des embeddings et du vectorstore...")
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    # EMBEDDINGS VIA API (Consomme très peu de RAM)
+    print("🔢 Initialisation des embeddings via Hugging Face API...")
+    embeddings = HuggingFaceEndpointEmbeddings(
+        model="sentence-transformers/all-MiniLM-L6-v2",
+        task="feature-extraction",
+        huggingfacehub_api_token=HF_TOKEN
+    )
+    
+    # Création du vectorstore (en mémoire pour le plan gratuit)
     vectorstore = Chroma.from_documents(documents=splits, embedding=embeddings)
-    print(f"✅ Vectorstore créé avec {len(splits)} chunks indexés")
+    print(f"✅ Vectorstore prêt ({len(splits)} chunks)")
 
-    # TON ÉTAPE 8 — CLIENT CEREBRAS
+    # Client Cerebras
     client = Cerebras(api_key=CEREBRAS_API_KEY)
 
 # =============================================================================
-# TA FONCTION RAG PRINCIPALE (exactement conservée)
+# LOGIQUE RAG
 # =============================================================================
-def ask_rag(question: str, k: int = 3, verbose: bool = False) -> str:
+def ask_rag(question: str, k: int = 3) -> str:
     if not vectorstore or not client:
-        return "❌ RAG non initialisé. Vérifiez la clé API et RefRGPD.md"
+        return "❌ Système non prêt. Vérifiez les clés API."
     
-    docs = vectorstore.max_marginal_relevance_search(question, k=k, fetch_k=10, lambda_mult=0.7)
-    if verbose:
-        print(f"\n🔍 {len(docs)} chunks récupérés pour : '{question}'")
-        for i, doc in enumerate(docs):
-            print(f"\n--- Chunk {i+1} ---")
-            print(doc.page_content[:300])
+    docs = vectorstore.max_marginal_relevance_search(question, k=k)
+    context = "\n\n".join([d.page_content for d in docs])
     
-    context = "\n\n".join([doc.page_content for doc in docs])
     prompt = f"""Tu es un assistant RH expert en droit du travail français.
 Utilise UNIQUEMENT le CONTEXTE fourni pour répondre à la QUESTION.
-Si la réponse n'est pas dans le contexte, dis poliment que tu ne trouves pas cette information dans le document.
-Ne jamais inventer d'information absente du contexte.
+Si la réponse n'est pas dans le contexte, dis poliment que tu ne trouves pas l'info.
 
 CONTEXTE :
 {context}
@@ -144,7 +129,7 @@ RÉPONSE :"""
     return response.choices[0].message.content
 
 # =============================================================================
-# ROUTES WEB (page vitrine + API)
+# ROUTES FLASK
 # =============================================================================
 @app.route("/")
 def index():
@@ -152,13 +137,19 @@ def index():
 
 @app.route("/ask", methods=["POST"])
 def ask():
-    question = request.json.get("question", "")
-    if question:
-        answer = ask_rag(question)
-        return jsonify({"answer": answer})
-    return jsonify({"error": "Aucune question"})
+    data = request.json
+    question = data.get("question", "")
+    if not question:
+        return jsonify({"error": "Question vide"}), 400
+    
+    answer = ask_rag(question)
+    return jsonify({"answer": answer})
 
+# =============================================================================
+# LANCEMENT
+# =============================================================================
 if __name__ == "__main__":
-    init_rag()  # ← Charge ton RAG au démarrage
+    init_rag() 
+    # Port dynamique requis par Render
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port)
