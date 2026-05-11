@@ -1,13 +1,8 @@
-
-
-sentence-transformers
+flask
+gunicorn
 langchain
-langchain-text-splitters
 langchain-community
 langchain-huggingface
-langchain-chroma
-sentence-transformers
-cerebras-cloud-sdk
 chromadb
-gunicorn
-flask
+python-dotenv
+requests
