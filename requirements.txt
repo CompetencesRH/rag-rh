@@ -6,3 +6,4 @@ langchain-huggingface
 chromadb
 python-dotenv
 requests
+cerebras-cloud-sdk
