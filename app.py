@@ -148,8 +148,11 @@ def ask():
 # =============================================================================
 # LANCEMENT
 # =============================================================================
+# ON LANCE L'INITIALISATION ICI (pour Gunicorn)
+print("🚀 Démarrage forcé de l'initialisation RAG...")
+init_rag() 
+
 if __name__ == "__main__":
-    init_rag() 
-    # Port dynamique requis par Render
+    # Ce bloc ne sert que si tu lances "python app.py" localement
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
