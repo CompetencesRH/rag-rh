@@ -10,3 +10,4 @@ sentence-transformers
 cerebras-cloud-sdk
 chromadb
 gunicorn
+flask
