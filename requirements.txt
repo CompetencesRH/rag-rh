@@ -9,3 +9,4 @@ langchain-chroma
 sentence-transformers
 cerebras-cloud-sdk
 chromadb
+gunicorn
