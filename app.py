@@ -148,11 +148,15 @@ def ask():
 # =============================================================================
 # LANCEMENT
 # =============================================================================
-# ON LANCE L'INITIALISATION ICI (pour Gunicorn)
-print("🚀 Démarrage forcé de l'initialisation RAG...")
-init_rag() 
-
+# =============================================================================
+# LANCEMENT
+# =============================================================================
 if __name__ == "__main__":
-    # Ce bloc ne sert que si tu lances "python app.py" localement
+    # En local (développement)
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+else:
+    # En production (Gunicorn)
+    # On n'appelle PAS init_rag() ici pour éviter le TIMEOUT au boot.
+    # On va l'appeler seulement lors de la PREMIÈRE question.
+    pass
