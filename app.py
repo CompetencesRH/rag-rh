@@ -137,26 +137,35 @@ def index():
 
 @app.route("/ask", methods=["POST"])
 def ask():
+    global vectorstore
+    
+    # --- AJOUT : Initialisation forcée si le système n'est pas prêt ---
+    if vectorstore is None:
+        print("⚠️ Système non prêt. Initialisation en cours (cela peut prendre 1 à 2 min)...")
+        try:
+            init_rag()
+        except Exception as e:
+            return jsonify({"answer": f"Erreur d'initialisation : {str(e)}"}), 500
+    # -----------------------------------------------------------------
+
     data = request.json
     question = data.get("question", "")
     if not question:
         return jsonify({"error": "Question vide"}), 400
     
-    answer = ask_rag(question)
-    return jsonify({"answer": answer})
+    try:
+        answer = ask_rag(question)
+        return jsonify({"answer": answer})
+    except Exception as e:
+        return jsonify({"answer": f"Erreur lors de la génération : {str(e)}"}), 500
 
 # =============================================================================
 # LANCEMENT
 # =============================================================================
-# =============================================================================
-# LANCEMENT
-# =============================================================================
 if __name__ == "__main__":
-    # En local (développement)
+    # En local, on peut initialiser au démarrage
+    init_rag()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-else:
-    # En production (Gunicorn)
-    # On n'appelle PAS init_rag() ici pour éviter le TIMEOUT au boot.
-    # On va l'appeler seulement lors de la PREMIÈRE question.
-    pass
+# En production (Gunicorn), on laisse la route /ask appeler init_rag() 
+# pour éviter le timeout de 30 secondes au démarrage du serveur.
