@@ -1,25 +1,127 @@
-<div class="selector">
-    <select id="docPicker">
-        {% for file in files %}
-            <option value="{{ file }}">{{ file }}</option>
-        {% endfor %}
-    </select>
-    <button onclick="loadDoc()">Charger ce document</button>
-</div>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Assistant RH - RAG Vitrine</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 800px; margin: 20px auto; padding: 20px; line-height: 1.6; background-color: #f4f7f6; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        h1 { color: #2c3e50; text-align: center; }
+        
+        /* Section Sélection */
+        .selection-zone { display: flex; gap: 10px; align-items: center; justify-content: center; }
+        select { padding: 10px; border-radius: 5px; border: 1px solid #ddd; flex-grow: 1; }
+        
+        /* Section Chat */
+        #chat-zone { display: none; margin-top: 20px; } /* Caché par défaut tant qu'aucun doc n'est chargé */
+        .input-group { display: flex; gap: 10px; margin-top: 15px; }
+        input[type="text"] { flex-grow: 1; padding: 12px; border: 1px solid #ddd; border-radius: 5px; }
+        
+        button { padding: 10px 20px; background-color: #3498db; color: white; border: none; border-radius: 5px; cursor: pointer; transition: 0.3s; }
+        button:hover { background-color: #2980b9; }
+        button:disabled { background-color: #bdc3c7; cursor: not-allowed; }
 
-<script>
-async function loadDoc() {
-    const filename = document.getElementById('docPicker').value;
-    const btn = event.target;
-    btn.innerText = "Chargement...";
-    
-    const res = await fetch('/select_doc', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: filename })
-    });
-    const data = await res.json();
-    alert(data.message || data.error);
-    btn.innerText = "Charger ce document";
-}
-</script>
+        #response { background: #e8f4fd; padding: 15px; border-radius: 5px; margin-top: 20px; min-height: 50px; border-left: 5px solid #3498db; }
+        .loader { display: none; color: #7f8c8d; font-style: italic; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <h1>🤖 Mon Assistant RH Virtuel</h1>
+
+    <div class="card">
+        <h3>1. Choisir la base de connaissance</h3>
+        <div class="selection-zone">
+            <select id="docPicker">
+                {% if not files %}
+                    <option disabled>Aucun document trouvé dans /documents</option>
+                {% endif %}
+                {% for file in files %}
+                    <option value="{{ file }}">{{ file }}</option>
+                {% endfor %}
+            </select>
+            <button id="btnLoad" onclick="loadDoc()">Charger le document</button>
+        </div>
+        <div id="loadStatus" class="loader">Indexation en cours...</div>
+    </div>
+
+    <div id="chat-zone" class="card">
+        <h3>2. Poser une question sur ce document</h3>
+        <div class="input-group">
+            <input type="text" id="userQuestion" placeholder="Ex: Quelle est la durée du préavis ?">
+            <button id="btnAsk" onclick="askQuestion()">Poser la question</button>
+        </div>
+        <div id="askLoader" class="loader">L'IA réfléchit...</div>
+        <div id="response" style="display:none;"></div>
+    </div>
+
+    <script>
+        // Fonction pour charger le document sélectionné
+        async function loadDoc() {
+            const filename = document.getElementById('docPicker').value;
+            const status = document.getElementById('loadStatus');
+            const btn = document.getElementById('btnLoad');
+            const chatZone = document.getElementById('chat-zone');
+
+            if(!filename) return alert("Veuillez choisir un fichier.");
+
+            status.style.display = "block";
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/select_doc', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: filename })
+                });
+                const data = await res.json();
+                
+                if(data.message) {
+                    alert(data.message);
+                    chatZone.style.display = "block"; // On affiche enfin la zone de texte !
+                } else {
+                    alert("Erreur: " + data.error);
+                }
+            } catch (e) {
+                alert("Erreur de connexion au serveur.");
+            } finally {
+                status.style.display = "none";
+                btn.disabled = false;
+            }
+        }
+
+        // Fonction pour envoyer la question
+        async function askQuestion() {
+            const question = document.getElementById('userQuestion').value;
+            const respDiv = document.getElementById('response');
+            const loader = document.getElementById('askLoader');
+            const btn = document.getElementById('btnAsk');
+
+            if(!question) return;
+
+            loader.style.display = "block";
+            respDiv.style.display = "none";
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/ask', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question: question })
+                });
+                const data = await res.json();
+                
+                respDiv.innerText = data.answer;
+                respDiv.style.display = "block";
+            } catch (e) {
+                respDiv.innerText = "Erreur lors de la réponse.";
+                respDiv.style.display = "block";
+            } finally {
+                loader.style.display = "none";
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
