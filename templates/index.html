@@ -1,41 +1,25 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>RAG RGPD - Assistant IA</title>
-    <style>
-        body { font-family: Arial; max-width: 800px; margin: 0 auto; padding: 20px; }
-        .container { background: #f5f5f5; padding: 30px; border-radius: 10px; }
-        input[type="text"] { width: 100%; padding: 15px; font-size: 16px; border: 1px solid #ddd; border-radius: 5px; }
-        button { background: #007bff; color: white; padding: 15px 30px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; }
-        #answer { margin-top: 20px; padding: 20px; background: white; border-radius: 5px; white-space: pre-wrap; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🤖 Assistant RAG RGPD</h1>
-        <p>Demande-moi n'importe quoi sur le document RefRGPD.md !</p>
-        <input type="text" id="question" placeholder="Ex: Quelles sont les obligations RGPD pour les candidats ?">
-        <br><br>
-        <button onclick="askRAG()">Poser la question</button>
-        <div id="answer"></div>
-    </div>
+<div class="selector">
+    <select id="docPicker">
+        {% for file in files %}
+            <option value="{{ file }}">{{ file }}</option>
+        {% endfor %}
+    </select>
+    <button onclick="loadDoc()">Charger ce document</button>
+</div>
 
-    <script>
-        async function askRAG() {
-            const question = document.getElementById("question").value;
-            if (!question) return;
-            
-            document.getElementById("answer").innerHTML = "⏳ Réflexion...";
-            
-            const response = await fetch("/ask", {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({question})
-            });
-            
-            const data = await response.json();
-            document.getElementById("answer").innerHTML = data.answer || data.error;
-        }
-    </script>
-</body>
-</html>
+<script>
+async function loadDoc() {
+    const filename = document.getElementById('docPicker').value;
+    const btn = event.target;
+    btn.innerText = "Chargement...";
+    
+    const res = await fetch('/select_doc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: filename })
+    });
+    const data = await res.json();
+    alert(data.message || data.error);
+    btn.innerText = "Charger ce document";
+}
+</script>
