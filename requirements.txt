@@ -3,14 +3,11 @@ fastapi
 uvicorn
 jinja2
 pydantic
+python-multipart
 langchain
 langchain-community
 langchain-text-splitters
 langchain-huggingface
-langchain-groq
+groq
 chromadb
 sentence-transformers
-python-dotenv
-flask
-gunicorn
-requests
