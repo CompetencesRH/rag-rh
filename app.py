@@ -13,8 +13,9 @@ from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharac
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEndpointEmbeddings
 from langchain_core.documents import Document
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_groq import ChatGroq
+
+# Groq SDK Officiel
+from groq import Groq
 
 # =============================================================================
 # CONFIGURATION
@@ -25,7 +26,7 @@ HF_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 
 app = FastAPI(title="RAG RH CompétencesRH")
 
-# 1. Middleware pour autoriser l'affichage dans l'iframe de votre site
+# Middleware pour autoriser l'affichage dans l'iframe de competencesrh.fr
 class AllowIframeMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
@@ -36,7 +37,7 @@ class AllowIframeMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(AllowIframeMiddleware)
 
-# 2. Configuration CORS
+# Configuration CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://competencesrh.fr", "https://www.competencesrh.fr"],
@@ -51,25 +52,22 @@ templates = Jinja2Templates(directory="templates")
 vectorstore = None
 current_doc_name = None
 
-# Modèle Groq
-llm = ChatGroq(
-    model="groq/compound",
-    temperature=0.1,
-    api_key=GROQ_API_KEY
-)
+# Initialisation du client Groq natif
+groq_client = Groq(api_key=GROQ_API_KEY)
 
-# Template du Prompt
-PROMPT_TEMPLATE = ChatPromptTemplate.from_messages([
-    ("system", (
-        "Tu es l'assistant RH expert de CompétencesRH, spécialisé en droit du travail français.\n"
-        "Utilise UNIQUEMENT le CONTEXTE fourni ci-dessous pour répondre à la QUESTION.\n"
-        "Si la réponse n'est pas dans le contexte, dis poliment que tu ne trouves pas l'information et recommande de contacter le service RH.\n"
-        "Ne jamais inventer une règle légale précise.\n"
-        "Langue : français uniquement.\n\n"
-        "CONTEXTE :\n{context}"
-    )),
-    ("human", "{question}")
-])
+SYSTEM_PROMPT_TEMPLATE = """Tu es l'assistant RH expert de CompétencesRH, spécialisé en droit du travail français.
+Utilise UNIQUEMENT le CONTEXTE fourni ci-dessous pour répondre à la QUESTION.
+Si la réponse n'est pas dans le contexte, dis poliment que tu ne trouves pas l'info et recommande de contacter le service RH.
+Ne jamais inventer une règle légale précise.
+Langue : français uniquement.
+
+CONTEXTE :
+{context}
+
+QUESTION :
+{question}
+
+RÉPONSE :"""
 
 # =============================================================================
 # MODÈLES DE DONNÉES
@@ -103,7 +101,7 @@ def load_document_to_rag(filename: str):
 
     markdown_clean, tables = extract_tables(markdown_content)
 
-    # 2. Découpage (Chunking)
+    # 2. Chunking
     headers_to_split_on = [("#", "Header 1"), ("##", "Header 2"), ("###", "Header 3")]
     markdown_splitter = MarkdownHeaderTextSplitter(
         headers_to_split_on=headers_to_split_on, 
@@ -118,27 +116,26 @@ def load_document_to_rag(filename: str):
     )
     splits = text_splitter.split_documents(md_header_splits)
 
-    # 3. Enrichissement du contexte
+    # 3. Enrichissement contexte
     for doc in splits:
         prefix_parts = [doc.metadata[k] for k in ["Header 1", "Header 2", "Header 3"] if k in doc.metadata]
         if prefix_parts:
             doc.page_content = f"[{' > '.join(prefix_parts)}]\n\n{doc.page_content}"
 
-    # 4. Ajout des tableaux comme documents séparés
+    # 4. Tableaux
     for i, table in enumerate(tables):
         splits.append(Document(
             page_content=f"[Tableau {i+1}]\n\n{table.strip()}",
             metadata={"source": f"tableau_{i+1}"}
         ))
 
-    # 5. Modèle d'embeddings multilingue (adapté au français)
+    # 5. Embeddings Multilingues
     embeddings = HuggingFaceEndpointEmbeddings(
         model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         task="feature-extraction",
         huggingfacehub_api_token=HF_TOKEN
     )
 
-    # Réinitialisation propre en mémoire pour libérer la RAM sur Render
     vectorstore = Chroma.from_documents(documents=splits, embedding=embeddings)
     current_doc_name = filename
     print(f"✅ {filename} indexé avec succès.")
@@ -173,20 +170,31 @@ async def ask(req: AskRequest):
         return {"answer": "Veuillez d'abord sélectionner un document dans la liste."}
 
     if not req.question.strip():
-        raise HTTPException(status_code=400, detail="Question vide.")
+        raise HTTPException(status_code=400, detail="Question vide")
 
-    # Recherche vectorielle des passages pertinents
-    docs = vectorstore.max_marginal_relevance_search(req.question, k=3)
-    context = "\n\n".join([d.page_content for d in docs])
+    try:
+        # Recherche des passages pertinents
+        docs = vectorstore.max_marginal_relevance_search(req.question, k=3)
+        context = "\n\n".join([d.page_content for d in docs])
 
-    # Invocateur de la chaîne LangChain
-    chain = PROMPT_TEMPLATE | llm
-    result = chain.invoke({"context": context, "question": req.question})
+        prompt = SYSTEM_PROMPT_TEMPLATE.format(context=context, question=req.question)
 
-    return {"answer": result.content}
+        # Appel au modèle groq/compound via le SDK officiel
+        completion = groq_client.chat.completions.create(
+            model="groq/compound",
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1
+        )
+
+        return {"answer": completion.choices[0].message.content}
+    except Exception as e:
+        print(f"❌ Erreur /ask : {str(e)}")
+        return {"answer": f"Erreur : {str(e)[:200]}"}
 
 # =============================================================================
-# DÉMARRAGE
+# LANCEMENT
 # =============================================================================
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
