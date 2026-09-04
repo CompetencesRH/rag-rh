@@ -1,5 +1,6 @@
 import os
 import re
+import traceback
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
@@ -11,7 +12,7 @@ import uvicorn
 # LangChain imports
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_huggingface import HuggingFaceEndpointEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 
 # Groq SDK Officiel
@@ -22,11 +23,10 @@ from groq import Groq
 # =============================================================================
 DOCS_FOLDER = "documents"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-HF_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 
 app = FastAPI(title="RAG RH CompétencesRH")
 
-# Middleware pour autoriser l'affichage dans l'iframe de competencesrh.fr
+# 1. Autoriser l'affichage en iframe sur votre domaine
 class AllowIframeMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
@@ -37,7 +37,7 @@ class AllowIframeMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(AllowIframeMiddleware)
 
-# Configuration CORS
+# 2. Configuration CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://competencesrh.fr", "https://www.competencesrh.fr"],
@@ -52,7 +52,7 @@ templates = Jinja2Templates(directory="templates")
 vectorstore = None
 current_doc_name = None
 
-# Initialisation du client Groq natif
+# Client Groq
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 SYSTEM_PROMPT_TEMPLATE = """Tu es l'assistant RH expert de CompétencesRH, spécialisé en droit du travail français.
@@ -92,7 +92,7 @@ def load_document_to_rag(filename: str):
     with open(file_path, "r", encoding="utf-8") as f:
         markdown_content = f.read()
 
-    # 1. Extraction des tableaux Markdown
+    # 1. Extraction des tableaux
     def extract_tables(text):
         table_pattern = r'(\|.+\|[\n\r](?:\|[-:| ]+\|[\n\r])(?:\|.+\|[\n\r])*)'
         tables = re.findall(table_pattern, text)
@@ -129,11 +129,9 @@ def load_document_to_rag(filename: str):
             metadata={"source": f"tableau_{i+1}"}
         ))
 
-    # 5. Embeddings Multilingues
-    embeddings = HuggingFaceEndpointEmbeddings(
-        model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-        task="feature-extraction",
-        huggingfacehub_api_token=HF_TOKEN
+    # 5. Embeddings exécutés en local (pas besoin de token Hugging Face)
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     )
 
     vectorstore = Chroma.from_documents(documents=splits, embedding=embeddings)
@@ -173,13 +171,13 @@ async def ask(req: AskRequest):
         raise HTTPException(status_code=400, detail="Question vide")
 
     try:
-        # Recherche des passages pertinents
+        # Recherche vectorielle des passages pertinents
         docs = vectorstore.max_marginal_relevance_search(req.question, k=3)
         context = "\n\n".join([d.page_content for d in docs])
 
         prompt = SYSTEM_PROMPT_TEMPLATE.format(context=context, question=req.question)
 
-        # Appel au modèle groq/compound via le SDK officiel
+        # Appel au modèle Groq
         completion = groq_client.chat.completions.create(
             model="groq/compound",
             messages=[
@@ -189,9 +187,12 @@ async def ask(req: AskRequest):
         )
 
         return {"answer": completion.choices[0].message.content}
+
     except Exception as e:
-        print(f"❌ Erreur /ask : {str(e)}")
-        return {"answer": f"Erreur : {str(e)[:200]}"}
+        # Affiche le détail complet de l'erreur dans la console Render
+        print("❌ ERREUR DÉTAILLÉE DANS /ASK :")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Erreur interne : {str(e)}")
 
 # =============================================================================
 # LANCEMENT
