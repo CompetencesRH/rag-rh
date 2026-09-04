@@ -1,6 +1,7 @@
 
 fastapi
 uvicorn
+gunicorn
 jinja2
 pydantic
 python-multipart
