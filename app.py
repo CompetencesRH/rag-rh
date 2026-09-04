@@ -132,9 +132,9 @@ QUESTION :
 RÉPONSE :"""
         
         response = client.chat.completions.create(
-            model="llama-3.1-8b",
+            model="groq/compound",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=512, temperature=0.1,
+            max_tokens=400, temperature=0.1,
         )
         return jsonify({"answer": response.choices[0].message.content})
     except Exception as e:
