@@ -55,6 +55,17 @@ current_doc_name = None
 # Client Groq
 groq_client = Groq(api_key=GROQ_API_KEY)
 
+# =============================================================================
+# MODÈLE D'EMBEDDINGS — chargé UNE SEULE FOIS au démarrage du serveur
+# (avant, il était recréé/re-téléchargé à chaque /select_doc, ce qui dépassait
+# le timeout de gunicorn et provoquait des WORKER TIMEOUT -> 502)
+# =============================================================================
+print("⏳ Chargement du modèle d'embeddings...")
+embeddings = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+)
+print("✅ Modèle d'embeddings prêt.")
+
 SYSTEM_PROMPT_TEMPLATE = """Tu es l'assistant RH expert de CompétencesRH, spécialisé en droit du travail français.
 Utilise UNIQUEMENT le CONTEXTE fourni ci-dessous pour répondre à la QUESTION.
 Si la réponse n'est pas dans le contexte, dis poliment que tu ne trouves pas l'info et recommande de contacter le service RH.
@@ -104,13 +115,13 @@ def load_document_to_rag(filename: str):
     # 2. Chunking
     headers_to_split_on = [("#", "Header 1"), ("##", "Header 2"), ("###", "Header 3")]
     markdown_splitter = MarkdownHeaderTextSplitter(
-        headers_to_split_on=headers_to_split_on, 
+        headers_to_split_on=headers_to_split_on,
         strip_headers=False
     )
     md_header_splits = markdown_splitter.split_text(markdown_clean)
 
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000, 
+        chunk_size=1000,
         chunk_overlap=200,
         separators=["\n\n", "\n", ".", " ", ""]
     )
@@ -129,11 +140,8 @@ def load_document_to_rag(filename: str):
             metadata={"source": f"tableau_{i+1}"}
         ))
 
-    # 5. Embeddings exécutés en local (pas besoin de token Hugging Face)
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-    )
-
+    # 5. Embeddings : on réutilise le modèle global chargé au démarrage
+    #    (ne PAS recréer HuggingFaceEmbeddings ici)
     vectorstore = Chroma.from_documents(documents=splits, embedding=embeddings)
     current_doc_name = filename
     print(f"✅ {filename} indexé avec succès.")
@@ -148,10 +156,10 @@ async def index(request: Request):
         os.makedirs(DOCS_FOLDER)
     files = [f for f in os.listdir(DOCS_FOLDER) if f.endswith(".md")]
     return templates.TemplateResponse(
-    request,
-    "index.html",
-    {"files": files, "current_doc": current_doc_name}
-)
+        request,
+        "index.html",
+        {"files": files, "current_doc": current_doc_name}
+    )
 
 @app.post("/select_doc")
 async def select_doc(req: SelectDocRequest):
