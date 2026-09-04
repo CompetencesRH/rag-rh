@@ -37,7 +37,7 @@ vectorstore = None
 current_doc_name = None
 
 llm = ChatGroq(
-    model="llama-3.1-8b-instant",  # quota gratuit le plus généreux (14 400 req/jour)
+    model="groq/compound",  # quota gratuit le plus généreux (14 400 req/jour)
     temperature=0.1,
     api_key=GROQ_API_KEY
 )
