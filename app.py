@@ -148,9 +148,10 @@ async def index(request: Request):
         os.makedirs(DOCS_FOLDER)
     files = [f for f in os.listdir(DOCS_FOLDER) if f.endswith(".md")]
     return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "files": files, "current_doc": current_doc_name}
-    )
+    request,
+    "index.html",
+    {"files": files, "current_doc": current_doc_name}
+)
 
 @app.post("/select_doc")
 async def select_doc(req: SelectDocRequest):
