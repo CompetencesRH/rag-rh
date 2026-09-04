@@ -1,32 +1,74 @@
 import os
 import re
-from flask import Flask, render_template, request, jsonify
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.templating import Jinja2Templates
+from fastapi.requests import Request
+from pydantic import BaseModel
+import uvicorn
 
 # LangChain imports
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEndpointEmbeddings
 from langchain_core.documents import Document
-from groq import Groq
-
-app = Flask(__name__)
+from langchain_groq import ChatGroq
 
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
 DOCS_FOLDER = "documents"
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-HF_TOKEN = os.environ.get("HUGGINGFACEHUB_API_TOKEN")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+HF_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+
+app = FastAPI()
+templates = Jinja2Templates(directory="templates")
+
+# CORS (même config que le chatbot)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://competencesrh.fr", "https://www.competencesrh.fr"],
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
 
 # Variables globales
 vectorstore = None
-client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 current_doc_name = None
+
+llm = ChatGroq(
+    model="llama-3.1-8b-instant",  # quota gratuit le plus généreux (14 400 req/jour)
+    temperature=0.1,
+    api_key=GROQ_API_KEY
+)
+
+SYSTEM_PROMPT_TEMPLATE = """Tu es l'assistant RH expert de CompétencesRH, spécialisé en droit du travail français.
+Utilise UNIQUEMENT le CONTEXTE fourni ci-dessous pour répondre à la QUESTION.
+Si la réponse n'est pas dans le contexte, dis poliment que tu ne trouves pas l'info et recommande de contacter le service RH.
+Ne jamais inventer une règle légale précise.
+Langue : français uniquement.
+
+CONTEXTE :
+{context}
+
+QUESTION :
+{question}
+
+RÉPONSE :"""
+
+# =============================================================================
+# MODELES
+# =============================================================================
+class SelectDocRequest(BaseModel):
+    filename: str
+
+class AskRequest(BaseModel):
+    question: str
 
 # =============================================================================
 # FONCTION D'INITIALISATION DYNAMIQUE
 # =============================================================================
-def load_document_to_rag(filename):
+def load_document_to_rag(filename: str):
     global vectorstore, current_doc_name
 
     file_path = os.path.join(DOCS_FOLDER, filename)
@@ -70,7 +112,7 @@ def load_document_to_rag(filename):
             metadata={"source": f"tableau_{i+1}"}
         ))
 
-    # 5. Embeddings et Vectorstore (On écrase l'ancien pour libérer la RAM)
+    # 5. Embeddings et Vectorstore (on écrase l'ancien pour libérer la RAM)
     embeddings = HuggingFaceEndpointEmbeddings(
         model="sentence-transformers/all-MiniLM-L6-v2",
         task="feature-extraction",
@@ -83,69 +125,50 @@ def load_document_to_rag(filename):
     return True, f"{filename} chargé avec succès."
 
 # =============================================================================
-# ROUTES FLASK
+# ROUTES
 # =============================================================================
-@app.route("/")
-def index():
-    # Liste les fichiers .md présents dans le dossier documents/
+@app.get("/")
+async def index(request: Request):
     if not os.path.exists(DOCS_FOLDER):
         os.makedirs(DOCS_FOLDER)
     files = [f for f in os.listdir(DOCS_FOLDER) if f.endswith(".md")]
-    return render_template("index.html", files=files, current_doc=current_doc_name)
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "files": files, "current_doc": current_doc_name}
+    )
 
-@app.route("/select_doc", methods=["POST"])
-def select_doc():
-    filename = request.json.get("filename")
-    if not filename:
-        return jsonify({"error": "Aucun fichier sélectionné"}), 400
+@app.post("/select_doc")
+async def select_doc(req: SelectDocRequest):
+    if not req.filename.strip():
+        raise HTTPException(status_code=400, detail="Aucun fichier sélectionné")
 
-    success, message = load_document_to_rag(filename)
+    success, message = load_document_to_rag(req.filename)
     if success:
-        return jsonify({"message": message})
-    return jsonify({"error": message}), 500
+        return {"message": message}
+    raise HTTPException(status_code=500, detail=message)
 
-@app.route("/ask", methods=["POST"])
-def ask():
+@app.post("/ask")
+async def ask(req: AskRequest):
     if vectorstore is None:
-        return jsonify({"answer": "Veuillez d'abord sélectionner un document dans la liste."})
+        return {"answer": "Veuillez d'abord sélectionner un document dans la liste."}
 
-    if client is None:
-        return jsonify({"answer": "Clé GROQ_API_KEY manquante côté serveur. Contactez l'administrateur."}), 500
-
-    data = request.json
-    question = data.get("question", "")
-    if not question:
-        return jsonify({"error": "Question vide"}), 400
+    if not req.question.strip():
+        raise HTTPException(status_code=400, detail="Question vide")
 
     try:
-        # Recherche des chunks
-        docs = vectorstore.max_marginal_relevance_search(question, k=3)
+        # Recherche des chunks pertinents
+        docs = vectorstore.max_marginal_relevance_search(req.question, k=3)
         context = "\n\n".join([d.page_content for d in docs])
 
-        prompt = f"""Tu es un assistant RH expert en droit du travail français.
-Utilise UNIQUEMENT le CONTEXTE fourni pour répondre à la QUESTION.
-Si la réponse n'est pas dans le contexte, dis poliment que tu ne trouves pas l'info.
+        prompt = SYSTEM_PROMPT_TEMPLATE.format(context=context, question=req.question)
 
-CONTEXTE :
-{context}
-
-QUESTION :
-{question}
-
-RÉPONSE :"""
-
-        response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=400, temperature=0.1,
-        )
-        return jsonify({"answer": response.choices[0].message.content})
+        result = llm.invoke([("human", prompt)])
+        return {"answer": result.content}
     except Exception as e:
-        return jsonify({"answer": f"Erreur : {str(e)}"}), 500
+        return {"answer": f"Erreur : {str(e)[:200]}"}
 
 # =============================================================================
 # LANCEMENT
 # =============================================================================
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
