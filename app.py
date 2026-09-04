@@ -56,15 +56,22 @@ current_doc_name = None
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 # =============================================================================
-# MODÈLE D'EMBEDDINGS — chargé UNE SEULE FOIS au démarrage du serveur
-# (avant, il était recréé/re-téléchargé à chaque /select_doc, ce qui dépassait
-# le timeout de gunicorn et provoquait des WORKER TIMEOUT -> 502)
+# MODÈLE D'EMBEDDINGS — chargé PARESSEUSEMENT (au premier /select_doc), puis
+# mis en cache en mémoire pour ne plus jamais être rechargé après.
+# On ne le charge PAS ici au démarrage : ça bloquerait le port binding et
+# Render ne détecterait jamais le service comme "up" (boucle de redéploiement).
 # =============================================================================
-print("⏳ Chargement du modèle d'embeddings...")
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-)
-print("✅ Modèle d'embeddings prêt.")
+embeddings = None
+
+def get_embeddings():
+    global embeddings
+    if embeddings is None:
+        print("⏳ Chargement du modèle d'embeddings (premier appel)...")
+        embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        )
+        print("✅ Modèle d'embeddings prêt.")
+    return embeddings
 
 SYSTEM_PROMPT_TEMPLATE = """Tu es l'assistant RH expert de CompétencesRH, spécialisé en droit du travail français.
 Utilise UNIQUEMENT le CONTEXTE fourni ci-dessous pour répondre à la QUESTION.
@@ -140,9 +147,8 @@ def load_document_to_rag(filename: str):
             metadata={"source": f"tableau_{i+1}"}
         ))
 
-    # 5. Embeddings : on réutilise le modèle global chargé au démarrage
-    #    (ne PAS recréer HuggingFaceEmbeddings ici)
-    vectorstore = Chroma.from_documents(documents=splits, embedding=embeddings)
+    # 5. Embeddings : chargé au premier appel puis réutilisé (voir get_embeddings)
+    vectorstore = Chroma.from_documents(documents=splits, embedding=get_embeddings())
     current_doc_name = filename
     print(f"✅ {filename} indexé avec succès.")
     return True, f"{filename} chargé avec succès."
