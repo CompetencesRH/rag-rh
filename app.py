@@ -12,7 +12,6 @@ import uvicorn
 # LangChain imports
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 
 # Groq SDK Officiel
@@ -56,21 +55,20 @@ current_doc_name = None
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 # =============================================================================
-# MODÈLE D'EMBEDDINGS — chargé PARESSEUSEMENT (au premier /select_doc), puis
-# mis en cache en mémoire pour ne plus jamais être rechargé après.
-# On ne le charge PAS ici au démarrage : ça bloquerait le port binding et
-# Render ne détecterait jamais le service comme "up" (boucle de redéploiement).
+# EMBEDDINGS via l'API d'inférence Hugging Face (pas de modèle chargé en RAM,
+# le calcul se fait sur les serveurs HF — indispensable sur le plan gratuit
+# Render qui n'a que 512 Mo de RAM)
 # =============================================================================
-embeddings = None
+from langchain_huggingface import HuggingFaceInferenceAPIEmbeddings
+
+HF_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+
+embeddings = HuggingFaceInferenceAPIEmbeddings(
+    api_key=HF_TOKEN,
+    model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+)
 
 def get_embeddings():
-    global embeddings
-    if embeddings is None:
-        print("⏳ Chargement du modèle d'embeddings (premier appel)...")
-        embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-        )
-        print("✅ Modèle d'embeddings prêt.")
     return embeddings
 
 SYSTEM_PROMPT_TEMPLATE = """Tu es l'assistant RH expert de CompétencesRH, spécialisé en droit du travail français.
