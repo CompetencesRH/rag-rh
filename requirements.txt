@@ -10,4 +10,4 @@ langchain-text-splitters
 langchain-huggingface
 groq
 chromadb
-sentence-transformers
+
