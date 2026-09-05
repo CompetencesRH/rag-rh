@@ -59,7 +59,7 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 # le calcul se fait sur les serveurs HF — indispensable sur le plan gratuit
 # Render qui n'a que 512 Mo de RAM)
 # =============================================================================
-from langchain_huggingface import HuggingFaceInferenceAPIEmbeddings
+from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 
 HF_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 
